@@ -2326,6 +2326,10 @@ impl Step for LlvmTools {
             builder.install(&exe, &dst_bindir, 0o755);
         }
 
+        // Copy libLLVM.so to the target lib dir as well,
+        // so the RPATH like `$ORIGIN/../lib` can find it.
+        maybe_install_llvm_target(builder, target, &image);
+
         // Prepare the overlay
         let overlay = tmp.join("llvm-tools-overlay");
         drop(fs::remove_dir_all(&overlay));
