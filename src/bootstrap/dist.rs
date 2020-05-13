@@ -2267,7 +2267,7 @@ fn maybe_install_llvm(builder: &Builder<'_>, target: Interned<String>, dst_libdi
 }
 
 /// Maybe add libLLVM.so to the target lib-dir for linking.
-fn maybe_install_llvm_target(builder: &Builder<'_>, target: Interned<String>, sysroot: &Path) {
+pub fn maybe_install_llvm_target(builder: &Builder<'_>, target: Interned<String>, sysroot: &Path) {
     let dst_libdir = sysroot.join("lib/rustlib").join(&*target).join("lib");
     maybe_install_llvm(builder, target, &dst_libdir);
 }
