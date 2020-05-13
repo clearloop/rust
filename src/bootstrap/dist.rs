@@ -516,7 +516,7 @@ impl Step for Rustc {
             // components like the llvm tools and LLD. LLD is included below and
             // tools/LLDB come later, so let's just throw it in the rustc
             // component for now.
-            maybe_install_llvm_dylib(builder, host, image);
+            maybe_install_llvm_runtime(builder, host, image);
 
             // Copy over lld if it's there
             if builder.config.lld_enabled {
@@ -772,6 +772,10 @@ impl Step for RustcDev {
         let compiler_to_use = builder.compiler_for(compiler.stage, compiler.host, target);
         let stamp = compile::librustc_stamp(builder, compiler_to_use, target);
         copy_target_libs(builder, &target, &image, &stamp);
+
+        // Copy libLLVM.so to the target lib dir as well, to support the
+        // inherited `-lLLVM` when using the compiler libraries.
+        maybe_install_llvm_target(builder, target, &image);
 
         let mut cmd = rust_installer(builder);
         cmd.arg("generate")
@@ -2233,27 +2237,18 @@ impl Step for HashSign {
     }
 }
 
-// Maybe add libLLVM.so to the lib-dir. It will only have been built if
-// LLVM tools are linked dynamically.
-//
-// We add this to both the libdir of the rustc binary itself (for it to load at
-// runtime) and also to the target directory so it can find it at link-time.
-//
-// Note: This function does no yet support Windows but we also don't support
-//       linking LLVM tools dynamically on Windows yet.
-pub fn maybe_install_llvm_dylib(builder: &Builder<'_>, target: Interned<String>, sysroot: &Path) {
+/// Maybe add libLLVM.so to the given destination lib-dir. It will only have
+/// been built if LLVM tools are linked dynamically.
+///
+/// Note: This function does not yet support Windows, but we also don't support
+///       linking LLVM tools dynamically on Windows yet.
+fn maybe_install_llvm(builder: &Builder<'_>, target: Interned<String>, dst_libdir: &Path) {
     let src_libdir = builder.llvm_out(target).join("lib");
-    let dst_libdir1 = sysroot.join("lib/rustlib").join(&*target).join("lib");
-    let dst_libdir2 =
-        sysroot.join(builder.sysroot_libdir_relative(Compiler { stage: 1, host: target }));
-    t!(fs::create_dir_all(&dst_libdir1));
-    t!(fs::create_dir_all(&dst_libdir2));
 
     if target.contains("apple-darwin") {
         let llvm_dylib_path = src_libdir.join("libLLVM.dylib");
         if llvm_dylib_path.exists() {
-            builder.install(&llvm_dylib_path, &dst_libdir1, 0o644);
-            builder.install(&llvm_dylib_path, &dst_libdir2, 0o644);
+            builder.install(&llvm_dylib_path, dst_libdir, 0o644);
         }
         return;
     }
@@ -2267,9 +2262,21 @@ pub fn maybe_install_llvm_dylib(builder: &Builder<'_>, target: Interned<String>,
             panic!("dist: Error calling canonicalize path `{}`: {}", llvm_dylib_path.display(), e);
         });
 
-        builder.install(&llvm_dylib_path, &dst_libdir1, 0o644);
-        builder.install(&llvm_dylib_path, &dst_libdir2, 0o644);
+        builder.install(&llvm_dylib_path, dst_libdir, 0o644);
     }
+}
+
+/// Maybe add libLLVM.so to the target lib-dir for linking.
+pub fn maybe_install_llvm_target(builder: &Builder<'_>, target: Interned<String>, sysroot: &Path) {
+    let dst_libdir = sysroot.join("lib/rustlib").join(&*target).join("lib");
+    maybe_install_llvm(builder, target, &dst_libdir);
+}
+
+/// Maybe add libLLVM.so to the runtime lib-dir for rustc itself.
+pub fn maybe_install_llvm_runtime(builder: &Builder<'_>, target: Interned<String>, sysroot: &Path) {
+    let dst_libdir =
+        sysroot.join(builder.sysroot_libdir_relative(Compiler { stage: 1, host: target }));
+    maybe_install_llvm(builder, target, &dst_libdir);
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -2318,6 +2325,10 @@ impl Step for LlvmTools {
             let exe = src_bindir.join(exe(tool, &target));
             builder.install(&exe, &dst_bindir, 0o755);
         }
+
+        // Copy libLLVM.so to the target lib dir as well,
+        // so the RPATH like `$ORIGIN/../lib` can find it.
+        maybe_install_llvm_target(builder, target, &image);
 
         // Prepare the overlay
         let overlay = tmp.join("llvm-tools-overlay");
